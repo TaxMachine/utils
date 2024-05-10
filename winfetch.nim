@@ -1,9 +1,11 @@
-import winim/[com, extra]
+import winim/[com]
 import os
+import osproc
 import strutils
 import strformat
 import regex
 import math
+import common/colors
 
 type
     IDisk = object
@@ -24,6 +26,12 @@ type
         days*: int
         hours*: int
         minutes*: int
+    IResolution = object
+        width*: int
+        height*: int
+
+proc `$`(res: IResolution): string =
+    return $res.width & "x" & $res.height
 
 proc cimv2(query: string): com =
     ## WMI query for CIMv2 namespace
@@ -42,26 +50,27 @@ proc cimv2(query: string): com =
     var wmi = GetObject("winmgmts:{impersonationLevel=impersonate}!\\\\.\\root\\cimv2")
     result = wmi.ExecQuery(query)
 
+var blue = rgb(30, 60, 247)
 let WINLOGO: seq[string] = @[
     "                                        ",
-    "                        ....,,:;+ccllll ",
-    "          ...,,+:;  cllllllllllllllllll ",
-    "    ,cclllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "                                        ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    llllllllllllll  lllllllllllllllllll ",
-    "    `'ccllllllllll  lllllllllllllllllll ",
-    "           `' \\*::  :ccllllllllllllllll",
-    "                           ````''*::cll ",
-    "                                     `` "
+    blue & "                        ....,,:;+ccllll " & colors.RESET,
+    blue & "          ...,,+:;  cllllllllllllllllll " & colors.RESET,
+    blue & "    ,cclllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "                                        " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    llllllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "    `'ccllllllllll  lllllllllllllllllll " & colors.RESET,
+    blue & "           `' \\*::  :ccllllllllllllllll" & colors.RESET,
+    blue & "                           ````''*::cll " & colors.RESET,
+    blue & "                                     `` " & colors.RESET
 ]
 
 proc getCPU(): string =
@@ -74,7 +83,7 @@ proc getGPU(): seq[string] =
 
 proc getMotherboard(): string =
     for i in cimv2("SELECT Manufacturer, Product, SerialNumber FROM Win32_BaseBoard WHERE Status = 'OK'"):
-        return $i["Product"]
+        return $i["Manufacturer"] & " " & $i["Product"]
 
 proc getUser(): IHostname =
     return IHostname(
@@ -84,18 +93,20 @@ proc getUser(): IHostname =
 
 proc getDisks(): seq[IDisk] =
     for i in cimv2("SELECT Name, Size, FreeSpace, FileSystem FROM Win32_LogicalDisk WHERE DriveType = 3"):
+        var disksize = parseInt($i["Size"])
         result.add(IDisk(
             letter: $i["Name"],
             fileSystem: $i["FileSystem"],
-            sizeMin: parseInt($i["Size"]) / 1024 / 1024 / 1024,
-            sizeMax: parseInt($i["FreeSpace"]) / 1024 / 1024 / 1024
+            sizeMax: disksize / 1024 / 1024 / 1024,
+            sizeMin: (disksize - parseInt($i["FreeSpace"])) / 1024 / 1024 / 1024
         ))
 
 proc getMemory(): IMemory =
     for i in cimv2("SELECT TotalVisibleMemorySize, FreePhysicalMemory FROM Win32_OperatingSystem"):
+        var maxmem = parseInt($i["TotalVisibleMemorySize"])
         return IMemory(
-            max: parseInt($i["TotalVisibleMemorySize"]) / 1024,
-            min: parseInt($i["FreePhysicalMemory"]) / 1024
+            max: maxmem / 1024 / 1024,
+            min: (maxmem - parseInt($i["FreePhysicalMemory"])) / 1024 / 1024
         )
 
 proc getOS(): IOS =
@@ -118,15 +129,74 @@ proc getUptime(): IUptime =
         minutes: splitDecimal(uptime / 1000 / 60 mod 60).intpart.int
     )
 
+proc getResolution(): IResolution =
+    var width = GetSystemMetrics(SM_CXSCREEN)
+    var height = GetSystemMetrics(SM_CYSCREEN)
+    return IResolution(
+        width: width,
+        height: height
+    )
+
 proc `*`(str: string, n: int): string =
     for _ in 1..n:
         result.add(str)
 
+proc `*`(ch: char, n: int): string =
+    for _ in 1..n:
+        result.add(ch)
+
+## Source: https://www.reddit.com/r/nim/comments/byob7v/is_there_an_alternative_to_echo_that_does_not/
+template printf(s: varargs[string, `$`]) =
+    for x in s:
+        stdout.write x
+
+proc printProperty(name: string, value: string): void =
+    var tabs = '\t' * 6
+    var green = rgb(26, 228, 19)
+    echo fmt"{tabs}{green}{name}{colors.RESET}: {value}"
 
 when isMainModule:
+    var
+        red = rgb(255, 61, 67)
+        green = rgb(26, 228, 19)
+        whiteish = rgb(246, 241, 241)
+
     var user = getUser()
     var user_bar = "-" * (user.hostname.len + 1 + user.username.len)
+    var tabs = '\t' * 6
 
-    echo fmt"{WINLOGO[0]}"
-    echo fmt"{WINLOGO[1]}       {user.username}@{user.hostname}"
-    echo fmt"{WINLOGO[2]}       {user_bar}"
+    echo WINLOGO.join("\n")
+    printf(fmt"{colors.prefix}[{$(len(WINLOGO) - 2)}A{colors.prefix}[9999999D")
+    echo fmt"{tabs}{red}{user.username}{whiteish}@{red}{user.hostname}{colors.RESET}"
+    echo fmt"{tabs}{user_bar}"
+
+    var osversion = getOS()
+    printProperty("OS", osversion.name)
+    printProperty("Kernel", osversion.version)
+    
+    var uptime = getUptime()
+    printf fmt"{tabs}{green}Uptime{colors.RESET}: "
+    if uptime.days > 0:
+        printf fmt"{uptime.days} days "
+    if uptime.hours > 0:
+        printf fmt"{uptime.hours} hours "
+    if uptime.minutes > 0:
+        printf fmt"{uptime.minutes} minutes"
+    echo ""
+
+    printProperty("Terminal", getTerminal())
+    printProperty("Resolution", $getResolution())
+    printProperty("Motherboard", getMotherboard())
+
+    printProperty("CPU", getCPU())
+    for gpu in getGPU():
+        printProperty("GPU", gpu)
+
+    var memory = getMemory()
+    printProperty("RAM", fmt"{$memory.min.formatFloat(ffDecimal, 2)}GB / {$memory.max.formatFloat(ffDecimal, 2)}GB")
+
+    for disk in getDisks():
+        printProperty("Disk", fmt"({disk.letter}) {disk.sizeMin.formatFloat(ffDecimal, 2)}GB / {disk.sizeMax.formatFloat(ffDecimal, 2)}GB")
+
+    for i in 0..4:
+        echo ""
