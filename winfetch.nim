@@ -1,6 +1,5 @@
 import winim/[com]
 import os
-import osproc
 import strutils
 import strformat
 import regex
